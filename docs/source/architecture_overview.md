@@ -132,15 +132,16 @@ BaseLlmArgs → TrtLlmArgs (TensorRT 后端)
 
 | 子目录/文件 | 职责 |
 |------------|------|
-| **`pyexecutor/`** | PyExecutor 核心实现 |
-| **`models/`** | 所有支持的模型实现 |
+| **`pyexecutor/`** | PyExecutor 核心实现（~2MB 源码） |
+| **`models/`** | 所有支持的模型实现（68 个文件） |
 | **`modules/`** | 可复用模块（Attention、MLP、Linear、Embedding 等） |
-| **`attention_backend/`** | 注意力后端（FlashInfer、FlashAttention、TRTLLM、Vanilla） |
+| **`attention_backend/`** | 注意力后端（FlashInfer、FlashAttention、TRTLLM、Vanilla、Sparse） |
 | **`auto_deploy/`** | AutoDeploy Beta 功能 |
 | **`compilation/`** | 图编译与 piecewise 优化 |
 | **`custom_ops/`** | 自定义算子（CUDA、CuTe DSL、Triton） |
-| **`distributed/`** | 分布式通信（AllReduce、AllToAll） |
+| **`distributed/`** | 分布式通信（AllReduce、AllToAll、AllGather） |
 | **`speculative/`** | 推测解码（Eagle3、MTP、Medusa、Lookahead 等） |
+| **`disaggregation/`** | 分离式服务（native/bounce、nixl、mixers、peer、resource） |
 | **`peft/`** | PEFT（LoRA 等）支持 |
 | **`kv_cache_compression/`** | KV Cache 压缩 |
 | **`quantization/`** | 量化模块 |
@@ -189,22 +190,24 @@ if self.previous_batch is not None:
 
 #### 3.3.2 `models/` — 模型实现
 
-共实现 **70+ 模型**，命名规范 `modeling_<model_name>.py`：
+共实现 **68 个模型文件**，命名规范 `modeling_<model_name>.py`：
 
-| 模型系列 | 文件 | 说明 |
-|---------|------|------|
-| LLaMA | `modeling_llama.py` (~72KB) | LLaMA 系列 / 派生模型基线 |
-| LLaMA Min Latency | `modeling_llama_min_latency.py` (~40KB) | 最小延迟优化版本 |
-| DeepSeek V3/V4 | `modeling_deepseekv3.py` (~96KB), `modeling_deepseekv4.py` (~120KB) | MoE 模型 |
-| Qwen2VL / Qwen3VL | `modeling_qwen2vl.py` (~100KB), `modeling_qwen3vl.py` (~73KB) | 视觉语言模型 |
-| Gemma 3/4 | `modeling_gemma3.py`, `modeling_gemma4.py` | Google Gemma 系列 |
-| Nemotron | `modeling_nemotron.py`, `modeling_nemotron_h.py` | NVIDIA Nemotron |
-| Mixtral | `modeling_mixtral.py` | 稀疏 MoE |
-| Phi | `modeling_phi3.py`, `modeling_phi4mm.py` | Microsoft Phi |
-| MiniMax | `modeling_minimaxm3.py` (~82KB), `modeling_minimaxm3_vl.py` | 含视觉语言 |
-| Multimodal | `modeling_multimodal_mixin.py`, `modeling_multimodal_utils.py` (~55KB) | 多模态共享组件 |
-| Speculative | `modeling_speculative.py` (~94KB) | 推测解码基础模型 |
-| DSPark | `modeling_dspark.py` (~53KB) | 动态稀疏架构 |
+| Model | File Size | Notes |
+|-------|-----------|-------|
+| **LLaMA** | `modeling_llama.py` (~72KB) | LLaMA 系列/派生模型基线 |
+| **LLaMA Min Latency** | `modeling_llama_min_latency.py` (~40KB) | 最小延迟优化版本 |
+| **DeepSeek V3/V4** | `modeling_deepseekv3.py` (~96KB), `modeling_deepseekv4.py` (~120KB) | MoE 模型 |
+| **Qwen2VL / Qwen3VL** | `modeling_qwen2vl.py` (~100KB), `modeling_qwen3vl.py` (~73KB) | 视觉语言模型 |
+| **Gemma 3/4** | `modeling_gemma3.py`, `modeling_gemma4.py`, `modeling_gemma4_unified.py` | Google Gemma 系列（Gemma4 含 Audio/Vision/Unified 多模态） |
+| **Nemotron** | `modeling_nemotron.py`, `modeling_nemotron_h.py`, `modeling_nemotron_nano.py` (~151KB) | NVIDIA Nemotron（含 Nano 变体） |
+| **Mixtral** | `modeling_mixtral.py` | 稀疏 MoE |
+| **Phi** | `modeling_phi3.py`, `modeling_phi4mm.py` | Microsoft Phi（含多模态） |
+| **MiniMax** | `modeling_minimaxm3.py` (~82KB), `modeling_minimaxm3_vl.py` | 含视觉语言 |
+| **Multimodal** | `modeling_multimodal_encoder.py`, `modeling_multimodal_mixin.py`, `modeling_multimodal_utils.py` (~55KB) | 多模态共享组件 |
+| **Speculative** | `modeling_speculative.py` (~94KB) | 推测解码基础模型 |
+| **DSPark** | `modeling_dspark.py` (~53KB) | 动态稀疏架构 |
+| **BART/T5** | `modeling_bart.py` (~27KB), `modeling_t5.py` (~42KB) | Encoder-Decoder 模型 |
+| **BERT/CLIP** | `modeling_bert.py` (~17KB), `modeling_clip.py` (~9KB) | 编码器模型 |
 
 **基类**位于 `modeling_utils.py` (~56KB)：
 - `PretrainedConfig` — 所有模型配置基类
@@ -216,17 +219,17 @@ if self.previous_batch is not None:
 
 | 文件/目录 | 职责 |
 |----------|------|
-| `attention.py` (~50KB) | 注意力机制核心实现 |
+| `attention.py` (~52KB) | 注意力机制核心实现 |
 | `mla.py` (~146KB) | Multi-Head Latent Attention (DeepSeek MLA) |
-| `linear.py` (~166KB) | 线性层（含多种量化实现） |
+| `linear.py` (~176KB) | 线性层（含多种量化实现） |
 | `mlp.py` | MLP 模块 |
-| `gated_mlp.py` | Gated MLP（SwiGLU 等） |
+| `gated_mlp.py` (~16KB) | Gated MLP（SwiGLU 等） |
 | `embedding.py` | Embedding 层 |
-| `rms_norm.py` | RMS Norm（含多种优化变体） |
+| `rms_norm.py` (~20KB) | RMS Norm（含多种优化变体） |
 | `layer_norm.py` | Layer Norm |
 | `rotary_embedding.py` | RoPE 旋转位置编码 |
 | `fused_moe/` | 融合 MoE 实现 |
-| `fused_ops/` | 融合算子 |
+| `fused_ops/` | 融合算子（含 `fused_qk_norm_rope_gate.py`、`gelu_tanh_mul_fp4_quant.py` 等） |
 | `mamba/` | Mamba 状态空间模型模块 |
 | `gemma4/` | Gemma4 特定模块 |
 | `fla/` | 线性注意力（FLA）模块 |
@@ -245,7 +248,7 @@ if self.previous_batch is not None:
 | Vanilla | `vanilla.py` (~31KB) | 基础 PyTorch 注意力 |
 | Triton Prefill | `triton_prefill.py` (~24KB) | Triton 实现 |
 | StarFlashInfer | `star_flashinfer.py` (~22KB) | Star 注意力 |
-| Sparse | `sparse/` | 稀疏注意力 |
+| Sparse | `sparse/` | 稀疏注意力（含 SparseAttention (DSA)、Rocket、SkipSoftmax、DeepSeek V4 块稀疏、MiniMax M3 MSA） |
 
 后端由 `TorchLlmArgs.attn_backend` 选择。
 
@@ -540,4 +543,5 @@ BaseLlmArgs
 ---
 
 **文档创建时间**: 2026-07-23  
-**基于**: TensorRT-LLM commit `5d8a78662f`
+**最后更新**: 2026-07-23  
+**基于**: TensorRT-LLM 代码快照（含 NVIDIA upstream 至 Jul 2026）
